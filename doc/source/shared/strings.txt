@@ -1,0 +1,25 @@
+.. Common string substitutions for brand customization.
+.. NOTE: Do not use underscores in these substitution names.
+.. For more information, see
+.. https://www.sphinx-doc.org/en/master/usage/restructuredtext/basics.html#substitutions
+
+.. Organization name
+.. |org| replace:: Nokia
+
+.. Short and long product names such as "RCP"
+.. |prod| replace:: RCP
+.. |prod-long| replace:: Radio Cloud Platform
+.. |prod-os| replace:: WadersOS
+
+.. Guide names, will be formatted in italics by default.
+
+.. Task-oriented headings that should not appear in TOC
+.. These are used with the .. rubric:: directive. For example:
+.. .. rubric:: |postreq|
+
+.. |context| replace:: About this task
+.. |prereq| replace:: Prerequisites
+.. |proc| replace:: Procedure
+.. |postreq| replace:: Postrequisites
+.. |result| replace:: Results
+.. |eg| replace:: Example

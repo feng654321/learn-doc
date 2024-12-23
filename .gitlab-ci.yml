@@ -1,0 +1,35 @@
+image: container-infra-local.artifactory-hz1.int.net.nokia.com/common-service/sphinx:latest
+
+stages:
+  - spell
+  - build
+  - deploy
+
+spell:
+  stage: spell
+  script:
+    - tox -e spell
+  only:
+    - merge_requests
+
+build:
+  stage: build
+  script:
+     - tox
+  artifacts:
+    paths:
+      - doc/build/*
+    expire_in: 1 week
+  only:
+    - merge_requests
+    - master
+
+pages:
+   stage: deploy
+   script:
+     - mv doc/build/html/ public/
+   artifacts:
+     paths:
+       - public
+   only:
+     - master

@@ -1,0 +1,390 @@
+#!/bin/bash -x
+#
+# How to use this script
+# 1. update the private key , then run it directly
+# GITLABE1_ACCESS_TOKEN="<replace the key>"
+# GITLABE2_ACCESS_TOKEN="<replace the key>"
+#
+# Assuption:
+#
+# 1. All subsystem use gitlab (both gitlabe1 and gitlabe2) the document store by
+# gitlab-page
+# E.g:
+# https://gitlabe1.ext.net.nokia.com/RCP/swmupgrade  --> https://rcp.gitlabe1-pages.ext.net.nokia.com/swmupgrade
+# https://gitlabe1.ext.net.nokia.com/genapi/genapieventconsumer ==> https://genapi.gitlabe1-pages.ext.net.nokia.com//genapieventconsumer
+# https://gitlabe2.ext.net.nokia.com/sdlevent/sdlevent ==> https://sdlevent.gitlabe1-pages.ext.net.nokia.com/sdlevent
+#
+# 2. Gerrite subsystem Need update the link manually
+# Where to store the document is not defined yet, here is just using the exising subsystem as
+# example
+# http://component-ci-jenkins.eecloud.dynamic.nsn-net.net:8080/job/component-ci/job/SS_CMNMS/Documentation/
+# 3. helm chart and container charts use the RAEDME.md as default document link,
+#    user should updte the link if it use other links
+
+# How the script works
+#
+# 1. clone all rcp spec subsystem in https://gitlabe1.ext.net.nokia.com/rcp_rpm_specs
+# rcp_rpm_specs
+# Group ID: 20731
+# 2. Parse all the spec files and responsible.yaml
+# 3. Clone all helm charts and parse RCP helm charts
+# - https://gitlabe2.ext.net.nokia.com/rcp/helmcharts
+# - https://gitlabe2.ext.net.nokia.com/VRAN2.0/k8s?page=1
+# 4. Clone all container repo and parse RCP containers
+# https://gitlabe1.ext.net.nokia.com/RCP/Containers
+# https://gitlabe2.ext.net.nokia.com/rcp/containers
+
+## Divide by domain or pronto group?
+PRONTOGROUPLIST=(RCP2CM
+    RCPAM
+    RCPASM_CCS
+    RCPCOMP
+    RCP_cTAF
+    RCPDB
+    RCPDEPLOY
+    RCPDPM
+    RCPELAM
+    RCPFCI
+    RCPHA
+    RCPMSG
+    RCPNES
+    RCPOI
+    RCPPCI
+    RCPPM
+    RCPSCM
+    RCPSEC
+    RCPSM
+    RCPSTORAGE
+    RCPSWM
+    RCPTNS
+    RCPTRC
+    RCPTRH
+    TBD
+    TRS)
+
+# HardCode the domian list here because there are some typo or incorrect value
+# in current exist responsible.yaml
+RCPDOMAINLIST=(AAPI
+    AI
+    CCS
+    CDC
+    CM
+    COMP
+    DB
+    DEP
+    Deploy
+    DM
+    DPM
+    ELAM
+    HA
+    Message
+    MSG
+    NES
+    OI
+    PM
+    cTAF
+    RCP_FM
+    SEC
+    STORAGE
+    SWM
+    TimeSync
+    TM
+    TNS
+    TRC
+    TRH
+    TRS)
+
+# RCPDOMAINLIST=(RCPOI)
+
+# Replace placeholders with actual values
+GITLABE1_ACCESS_TOKEN=""
+GITLABE2_ACCESS_TOKEN=""
+
+function usage() {
+    echo "This script need 2 parameters:"
+    echo "$0 <GITLABE1_ACCESS_TOKEN>" "<GITLABE2_ACCESS_TOKEN>"
+    echo "Example:"
+    echo "Please refer https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html to create personal access token"
+    exit 1
+}
+
+# https://gitlabe1.ext.net.nokia.com/rcp_rpm_specs
+SPEC_GROUP_ID="20731"
+
+# https://gitlabe2.ext.net.nokia.com/rcp/helmcharts
+HELM_CHART_GROUP_ID="8900"
+
+# https://gitlabe2.ext.net.nokia.com/VRAN2.0/k8s?page=1
+VRAN2_CHART_GROUP_ID="7381"
+
+# https://gitlabe1.ext.net.nokia.com/RCP/Containers
+GITLABE1_CONTAINER_GROUP_ID="19641"
+# https://gitlabe2.ext.net.nokia.com/rcp/containers
+GITLABE2_CONTAINER_GROUP_ID="13162"
+
+SPEC_PATH="rcp_rpm_specs"
+
+PAGE=1
+PER_PAGE=100
+
+DOCS="rcp-docs-summary.md"
+
+function clone_projects_by_group() {
+    token="$1"
+    server="$2"
+    group_id="$3"
+    target_dir="$4"
+
+    mkdir -p $target_dir
+    echo "clone all subsystems to $4"
+    pushd $target_dir
+
+    PAGE=1
+    while true; do
+        response=$(curl --header "PRIVATE-TOKEN:  $token" "https://$server.ext.net.nokia.com/api/v4/groups/$group_id/projects?per_page=$PER_PAGE&page=$PAGE")
+        project_count=$(echo "$response" | jq length)
+
+        # Break the loop if no more projects are returned
+        if [ "$project_count" -eq 0 ]; then
+            break
+        fi
+
+        # Clone the subsystems
+        git_urls=$(echo "$response" |
+            json_reformat | grep ssh_url_to_repo | awk '{print $2}' |
+            awk -F "," '{print $1}' | awk -F "\"" '{print $2}')
+
+        echo "$git_urls"
+
+        for ss in $git_urls; do
+            echo $ss
+
+            git clone $ss
+
+            # The next page
+        done
+        PAGE=$((PAGE + 1))
+
+    done
+    popd
+
+}
+
+function get_gitlab_pages_according_url() {
+    url="$1"
+    # echo "input url=$url"
+    # E.g https://gitlabe1.ext.net.nokia.com/RCP/swmupgrade  --> https://rcp.gitlabe1-pages.ext.net.nokia.com/swmupgrade
+    domain=$(echo $url | awk -F "/" '{print $(NF-1)}')
+    ss=$(echo $url | awk -F "/" '{print $(NF)}')
+    gitlab_server=$(echo $url | awk -F "." '{print $1}' | awk -F '/' '{print $NF}')
+    gitlab_page_url="https://$domain.$gitlab_server-pages.ext.net.nokia.com/$ss"
+    echo "$gitlab_page_url"
+}
+
+function validata_document_url() {
+    url=$1
+    response=$(curl -Is "$url" | head -n 1 | awk '{print $2}')
+
+    if [ "$response" != "404" ]; then
+        echo "$url is reachable, $response."
+        return 0
+    fi
+
+    echo "$url is not reachable, returned $response."
+    return 1
+}
+
+SPEC_IGNORES="coverity|waderspkg-minimal|strongswan|robottests|RobotTest"
+
+function parse_spec_and_update_source_code_document() {
+    domain="$1"
+    echo "Parse spec for domain $domain"
+
+    echo "## Source code" >>$domain.md
+    echo >>$domain.md
+    pwd
+    ls -l
+    pushd rcp_rpm_specs
+
+    ss_list=$(find ./ -type f -name "responsible.yaml" -exec sh -c "yq eval '.domain[] ' {}|grep -q -i -w $domain && echo {}" \; | awk -F '/' '{print $2}' | grep -v -E $SPEC_IGNORES)
+    echo $ss_list
+    for s in $ss_list; do
+        echo $s
+        url=$(grep -r -E "^URL" ./$s/*.spec | awk '{print $NF}')
+        echo $url
+        case "$url" in
+        *gitlabe*)
+            echo "This is subsystem $s store in gitlab"
+            # TODO: change to git lab pages when most subsystem change to use gitlab page
+            # docuemntUrl=$(get_gitlab_pages_according_url "$url")
+            docuemntUrl="$url/-/blob/master/README.md"
+            echo "- [$s]($docuemntUrl)" >>../$domain.md
+
+            ;;
+        *)
+            echo "<!-- Need manual update the document link which subystem is in gerrit -->" >>../$domain.md
+            echo "- [$s]($url)" >>../$domain.md
+            ;;
+        esac
+
+    done
+    echo >>../$domain.md
+    popd
+}
+
+function get_pronto_group_list() {
+    grep -r -i "pronto_group" rcp_rpm_specs/*/responsible.yaml | awk '{print $NF}' | sort | uniq
+}
+function get_domain_list() {
+    for f in $(find ./ -name responsible.yaml); do
+        yq eval .domain $f
+    done | sort -u | awk '{print $NF}'
+}
+
+function clone_all_helm_charts() {
+    echo "Clone all helm chart subsystems"
+    clone_projects_by_group "$GITLABE2_ACCESS_TOKEN" "gitlabe2" "$HELM_CHART_GROUP_ID" "charts"
+    clone_projects_by_group "$GITLABE2_ACCESS_TOKEN" "gitlabe2" "$VRAN2_CHART_GROUP_ID" "charts"
+
+}
+function clone_all_containers() {
+    echo "Clone all RCP containers subsystems"
+    clone_projects_by_group "$GITLABE1_ACCESS_TOKEN" "gitlabe1" "$GITLABE1_CONTAINER_GROUP_ID" "containers"
+    clone_projects_by_group "$GITLABE2_ACCESS_TOKEN" "gitlabe2" "$GITLABE2_CONTAINER_GROUP_ID" "containers"
+
+}
+
+function clone_all_specs() {
+    clone_projects_by_group "$GITLABE1_ACCESS_TOKEN" "gitlabe1" "$SPEC_GROUP_ID" "$SPEC_PATH"
+}
+
+function prepare() {
+    if ! [[ -d $SPEC_PATH ]]; then
+        clone_all_specs
+    fi
+    if ! [[ -d "charts" ]]; then
+        clone_all_helm_charts
+    fi
+    if ! [[ -d "containers" ]]; then
+        clone_all_containers
+    fi
+}
+
+function parse_rcp_helm_chart_subsystems() {
+    domain="$1"
+    echo "Parse helm chart for domain $domain"
+
+    echo "## Helm charts" >>$domain.md
+    echo >>$domain.md
+
+    pwd
+    ls -l
+    pushd charts
+    pwd
+
+    ss_list=$(find ./ -type f -name "responsible.yaml" -exec sh -c "yq eval '.domain[] ' {}|grep -q -i -w $domain && echo {}" \; | awk -F '/' '{print $2}')
+    for s in $ss_list; do
+        echo $s
+        pushd $s
+        pwd
+        ls -la
+        ssh_url=$(git config --get remote.origin.url)
+        http_url=${ssh_url/:/\//}
+        http_url=${http_url/git@/https:\/\/}
+        http_url=${http_url%.git}
+        http_url="$http_url/-/blob/master/README.md"
+        echo $http_url
+        echo "- [$s]($http_url)" >>../../$domain.md
+        popd
+    done
+    popd
+    echo >>$domain.md
+}
+
+function parse_rcp_containers() {
+    domain="$1"
+    echo "Parse container for domain $domain"
+
+    echo "## Containers" >>$domain.md
+    echo >>$domain.md
+    pwd
+    ls -l
+    pushd containers
+    pwd
+
+    ss_list=$(find ./ -type f -name "responsible.yaml" -exec sh -c "yq eval '.domain[] ' {}|grep -q -i -w $domain && echo {}" \; | awk -F '/' '{print $2}')
+    for s in $ss_list; do
+        echo $s
+        pushd $s
+        pwd
+        ls -la
+        ssh_url=$(git config --get remote.origin.url)
+        http_url=${ssh_url/:/\//}
+        http_url=${http_url/git@/https:\/\/}
+        http_url=${http_url%.git}
+        http_url="$http_url/-/blob/master/README.md"
+        echo $http_url
+        echo "- [$s]($http_url)" >>../../$domain.md
+        popd
+    done
+    popd
+}
+
+function write_notes() {
+    echo '```{note}' >>$domain.md
+    echo "The first version document is created by tool, develop team take full responsibility to maintain this document" >>$domain.md
+    echo >>$domain.md
+    echo "Domain team can add more chapters" >>$domain.md
+    echo >>$domain.md
+    echo "Examples:" >>$domain.md
+    echo >>$domain.md
+    echo "- API" >>$domain.md
+    echo "- User's Guideline" >>$domain.md
+    echo "- ..." >>$domain.md
+    echo '```' >>$domain.md
+    echo >>$domain.md
+}
+
+function update_doc_by_domain() {
+    for domain in "${RCPDOMAINLIST[@]}"; do
+        echo "# $domain" >$domain.md
+        echo >>$domain.md
+        write_notes
+
+        parse_spec_and_update_source_code_document $domain
+        parse_rcp_helm_chart_subsystems $domain
+        parse_rcp_containers $domain
+    done
+}
+
+function create_index() {
+    echo "# RCP Components Documents" >index.md
+    echo >>index.md
+    echo '```{toctree}' >>index.md
+    echo ":maxdepth: 2" >>index.md
+    echo >>index.md
+
+    for domain in "${RCPDOMAINLIST[@]}"; do
+        echo "$domain" >>index.md
+    done
+
+    echo '```' >>index.md
+    echo >>index.md
+
+}
+
+function main() {
+
+    GITLABE1_ACCESS_TOKEN=$1
+    GITLABE2_ACCESS_TOKEN=$2
+    if [ -z $GITLABE1_ACCESS_TOKEN ] || [ -z $GITLABE2_ACCESS_TOKEN ]; then
+        usage
+    fi
+
+    prepare
+    # get_domain_list
+    create_index
+    update_doc_by_domain
+}
+
+main "$@"
